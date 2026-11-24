@@ -1,0 +1,15 @@
+{
+  "name": "gsasg-registry",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "build:mock": "node build.mjs --mock",
+    "test:db": "node test/rls.test.mjs",
+    "test:smoke": "node test/smoke.mjs"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.2.17",
+    "jsdom": "^25.0.0"
+  }
+}
