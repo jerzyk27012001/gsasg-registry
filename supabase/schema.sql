@@ -83,6 +83,16 @@ create table if not exists public.export_log (
   patients    int
 );
 
+-- registry-wide benchmark distribution, published by INI. Aggregate and
+-- de-identified (one number per surgeon or site, no names), so every approved
+-- user may read it while still seeing only their own site's patients.
+create table if not exists public.benchmarks (
+  id            int primary key default 1 check (id = 1),
+  data          jsonb not null,
+  published_at  timestamptz not null default now(),
+  published_by  text
+);
+
 -- ---------- who is asking ----------
 -- security definer so the policies below can read profiles without recursion
 create or replace function public.my_role() returns text
@@ -168,6 +178,7 @@ alter table public.invites    enable row level security;
 alter table public.cases      enable row level security;
 alter table public.audit_log  enable row level security;
 alter table public.export_log enable row level security;
+alter table public.benchmarks enable row level security;
 
 drop policy if exists sites_read on public.sites;
 create policy sites_read on public.sites for select to authenticated using (true);
@@ -201,6 +212,16 @@ drop policy if exists audit_read on public.audit_log;
 create policy audit_read on public.audit_log for select to authenticated
   using (public.my_role() = 'ini_admin' or (site is not null and public.can_see_site(site)));
 
+drop policy if exists bench_read on public.benchmarks;
+create policy bench_read on public.benchmarks for select to authenticated
+  using (public.my_role() in ('ini_admin','site_user'));
+drop policy if exists bench_write on public.benchmarks;
+create policy bench_write on public.benchmarks for insert to authenticated
+  with check (public.my_role() = 'ini_admin');
+drop policy if exists bench_update on public.benchmarks;
+create policy bench_update on public.benchmarks for update to authenticated
+  using (public.my_role() = 'ini_admin') with check (public.my_role() = 'ini_admin');
+
 drop policy if exists export_read on public.export_log;
 create policy export_read on public.export_log for select to authenticated
   using (public.my_role() = 'ini_admin' or user_id = auth.uid());
@@ -216,6 +237,7 @@ grant select, insert, update, delete on public.cases to authenticated;
 grant select on public.audit_log to authenticated;
 grant select, insert on public.export_log to authenticated;
 grant usage on sequence public.export_log_id_seq to authenticated;
+grant select, insert, update on public.benchmarks to authenticated;
 grant execute on function public.next_case_id() to authenticated;
 grant execute on function public.my_role() to authenticated;
 grant execute on function public.my_site() to authenticated;

@@ -5,6 +5,7 @@
   const ls = k => { try{ return JSON.parse(localStorage.getItem('mock_'+k)); }catch(e){ return null; } };
   const ss = (k,v) => { try{ localStorage.setItem('mock_'+k, JSON.stringify(v)); }catch(e){} };
   const DB = ls('db') || {users:[], profiles:[], invites:[], cases:[], export_log:[], audit:[], seq:1000};
+  DB.benchmarks = DB.benchmarks || [];
   const persist = () => ss('db', DB);
   window.__mockDB = DB;
   let session = ls('session');
@@ -22,6 +23,7 @@
       if(name==='profiles'){ const p=me(); return rows.filter(r=>p && (r.user_id===p.user_id || p.role==='ini_admin')); }
       if(name==='invites'){ const p=me(); return p&&p.role==='ini_admin'? rows : []; }
       if(name==='export_log'){ const p=me(); return rows.filter(r=>p&&(p.role==='ini_admin'||r.user_id===p.user_id)); }
+      if(name==='benchmarks'){ const p=me(); return p && p.role!=='pending'? rows : []; }
       return rows;
     };
     const src = () => DB[name];
@@ -50,6 +52,9 @@
           } else if(name==='export_log'){
             if(!p || r.user_id!==p.user_id) return err('new row violates row-level security policy for table "export_log"');
             DB.export_log.push({...r, at:new Date().toISOString()});
+          } else if(name==='benchmarks'){
+            if(!p||p.role!=='ini_admin') return err('new row violates row-level security policy for table "benchmarks"');
+            const i=DB.benchmarks.findIndex(x=>x.id===r.id); if(i>-1) DB.benchmarks[i]=r; else DB.benchmarks.push(r);
           } else return err('permission denied for table '+name);
         }
         persist(); return ok(null);

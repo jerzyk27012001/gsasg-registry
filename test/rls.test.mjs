@@ -99,5 +99,15 @@ await as(U.lake, ()=>q(`insert into public.export_log(user_id,scope,what,patient
 await expectErr(()=>as(U.lake, ()=>q(`insert into public.export_log(user_id,scope,what) values($1,'x','y')`,[U.pi])),'cannot log an export as someone else');
 r = await as(U.pi, ()=>q(`select count(*)::int n from public.export_log`)); ok(r.rows[0].n===1,'INI sees all exports');
 
+console.log('\n8. Published benchmarks');
+await as(U.pi, ()=>q(`insert into public.benchmarks(id,data,published_by) values(1,'{"cases":3}','vokshoor')`));
+r = await as(U.lake, ()=>q(`select data->>'cases' c from public.benchmarks`)); ok(r.rows[0]&&r.rows[0].c==='3','site user reads published benchmarks');
+await expectErr(()=>as(U.lake, ()=>q(`insert into public.benchmarks(id,data) values(1,'{}') on conflict (id) do update set data='{}'`)),'site user cannot publish benchmarks');
+r = await as(U.lake, ()=>q(`update public.benchmarks set data='{}'`)); ok(r.affectedRows===0,'site user cannot overwrite benchmarks');
+await signup('00000000-0000-0000-0000-000000000009','late@example.com');
+r = await as('00000000-0000-0000-0000-000000000009', ()=>q(`select count(*)::int n from public.benchmarks`)); ok(r.rows[0].n===0,'pending user cannot read benchmarks');
+await as(U.pi, ()=>q(`insert into public.benchmarks(id,data) values(1,'{"cases":5}') on conflict (id) do update set data=excluded.data, published_at=now()`));
+r = await q(`select data->>'cases' c from public.benchmarks`); ok(r.rows[0].c==='5','INI can republish (upsert)');
+
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail?1:0);

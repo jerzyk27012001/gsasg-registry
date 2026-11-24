@@ -56,6 +56,20 @@ async def main():
         await pg.wait_for_timeout(900)
         say("AEs in database:", before, "→", await db(f"DB.cases.find(c=>c.id==='{cid}').data.aes.length"), "| chip:", await pg.inner_text("#saveChip"))
 
+        print("6b. New screens as INI; publish benchmarks; demo backfill")
+        await pg.evaluate("go('access')"); await pg.wait_for_timeout(400)
+        say("access screen:", await pg.is_visible("text=Outcomes by indication"), "| denied rows:", await pg.evaluate("CASES.filter(c=>c.access&&c.access.priorAuth==='Denied').length"))
+        await pg.evaluate("go('bench')"); await pg.wait_for_timeout(400)
+        await pg.click("text=Publish benchmarks to sites"); await pg.wait_for_timeout(600)
+        say("benchmarks in database:", await db("DB.benchmarks.length===1 && DB.benchmarks[0].data.cases"))
+        did = await db("DB.cases.find(c=>c.id.startsWith('DEMO')).id")
+        await db(f"(()=>{{const r=DB.cases.find(c=>c.id==='{did}'); delete r.data.access; delete r.data.periop; delete r.data.outsideCare; localStorage.setItem('mock_db',JSON.stringify(DB)); return 1;}})()")
+        await pg.goto(URL); await pg.wait_for_timeout(1500)
+        say("old demo record backfilled in app:", await pg.evaluate(f"!!CASES.find(c=>c.id==='{did}').access.payer"),
+            "| and saved back:", await db(f"!!DB.cases.find(c=>c.id==='{did}').data.access"))
+        await pg.evaluate(f"openCase('{did}')"); await pg.wait_for_timeout(300)
+        say("case page shows coverage card:", await pg.is_visible("text=Coverage & access"))
+
         print("7. Sign out; Lakeshore user signs up from the invite → sees only Lakeshore")
         await pg.click("#switchBtn"); await pg.wait_for_timeout(400)
         await pg.click(".authcard >> text=Create account")
@@ -67,6 +81,12 @@ async def main():
         await pg.evaluate("go('users')"); await pg.wait_for_timeout(200); say("go('users') lands on:", await pg.inner_text("#scTitle"))
         r = await pg.evaluate("""(async()=>{ const {error}=await sb.from('cases').upsert({id:'HACK-1',site:'Neurosurgery & Spine Group — Santa Monica',data:{}}); return error&&error.message; })()""")
         say("writing to another site is refused:", r)
+
+        await pg.evaluate("go('bench')"); await pg.wait_for_timeout(900)
+        btxt = await pg.inner_text("#content")
+        say("site user benchmarks: registry median shown:", "registry median" in btxt, "| other sites' surgeons named:",
+            any(n in btxt for n in await pg.evaluate("SURGEONS.filter(s=>!scopedSurgeons().includes(s))")))
+        say("site user access screen sees only own site:", await pg.evaluate("go('access'), CASES.every(c=>c.site.startsWith('Lakeshore'))"))
 
         print("8. A stranger signs up → waiting for approval → INI approves → access")
         await pg.click("#switchBtn"); await pg.wait_for_timeout(300)

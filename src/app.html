@@ -410,6 +410,20 @@ table.tbl td.mono{font-variant-numeric:tabular-nums;font-size:12.5px}
 .phone .opt[aria-checked="true"]{border-color:var(--s1);background:color-mix(in srgb,var(--s1) 8%,transparent)}
 .phone .opt i{width:14px;height:14px;border-radius:50%;border:1.5px solid var(--baseline);flex:0 0 14px;margin-top:1px}
 .phone .opt[aria-checked="true"] i{border-color:var(--s1);background:var(--s1);box-shadow:inset 0 0 0 2.5px var(--surface)}
+.phone .opt.multi i{border-radius:3px}
+.accgrid{grid-template-columns:minmax(0,1fr) minmax(0,1.35fr)}
+@media (max-width:980px){.accgrid{grid-template-columns:1fr}}
+.benchhead,.benchrow{display:grid;grid-template-columns:minmax(150px,1.3fr) 90px 90px minmax(200px,1.6fr);gap:14px;align-items:center}
+.benchhead{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding:0 0 8px;border-bottom:1px solid var(--grid)}
+.benchrow{padding:12px 0;border-bottom:1px solid var(--grid)}
+.benchrow:last-child{border-bottom:0}
+.benchrow .bv{font-variant-numeric:tabular-nums}
+.benchrow .bv b{font-size:17px;letter-spacing:-.01em}
+@media (max-width:720px){
+  .benchhead{display:none}
+  .benchrow{grid-template-columns:1fr 1fr;row-gap:6px}
+  .benchrow>div:first-child,.benchrow>div:last-child{grid-column:1 / -1}
+}
 .phone .nrs{display:flex;gap:4px;margin:10px 0 4px}
 .phone .nrs button{flex:1;border:1px solid var(--border);background:var(--surface);border-radius:5px;
   padding:7px 0;font-size:11.5px;cursor:pointer}
@@ -2781,6 +2795,7 @@ function addVisitForm(c){
         mField('EQ-5D-5L index',st,'eq5d',{type:'number',step:'0.01',ph:'-0.59–1.00',onInput:drawV}),
         mSelect('Satisfied with result',st,'satisfied',['Very satisfied','Satisfied','Neutral','Dissatisfied']),
         mSelect('Work status',st,'work',['Original job','Modified duties','Not working','Retired','Student']))),
+    outsideCareBlock(st),
     el('div',{class:'subcard'},
       el('h5',{},'Imaging performed at this visit?'),
       el('div',{class:'fgrid c2'},
@@ -2932,8 +2947,9 @@ function addVisit(c){
         if(+v.ho>c.hoGrade) c.hoGrade=+v.ho;
       }
       c.visitsExtra.push({date:v.date,type:v.type,notes:v.notes});
+      const oc = saveOutsideFromVisit(c, v, tpk? tpk.k : null);
       logAudit(c,'Visit recorded', tpk? TP[tpk.k].label : v.type, '\u2014', 'entered');
-      toast('Visit saved'+(tpk?' — '+tpk.label:''));
+      toast('Visit saved'+(tpk?' — '+tpk.label:'')+(oc?' · outside care sent for verification':''));
       go('case');
     }});
 }
@@ -3091,6 +3107,7 @@ function completeness(c){
 function renderCase(){
   const c = CASES.find(x=>x.id===openCaseId);
   if(!c) return el('div',{class:'empty'},'Select a case');
+  ensureExtras(c);
   const bmi = bmiFrom(c.heightCm, c.weightKg);
   const band = bmiBand(bmi);
   const lp = latestProm(c), lr = latestRadio(c);
@@ -3190,7 +3207,7 @@ function renderCase(){
         })(),
         el('h4',{},'Sections'),
         el('div',{class:'secnav'},
-          [['s_construct','Construct & implants'],['s_history','History & medications'],
+          [['s_construct','Construct & implants'],['s_access','Indication, coverage & setting'],['s_history','History & medications'],
            ['s_surg','Surgical history'],['s_external','Outside records & queries'],
            ['s_ae','Adverse events'],
            ['s_tests','Medical tests'],['s_align','Alignment & motion'],['s_timeline','Care timeline'],
@@ -3284,6 +3301,8 @@ function renderCase(){
             l, tx:TX[c.levels[l].tx].label,
             dev: c.levels[l].device? `${c.levels[l].device} — ${c.levels[l].mfr}`:'—',
             udi: c.levels[l].udi || '—'}))))),
+
+    accessCards(c),
 
     /* ---------- history: comorbidity, substances, medication ---------- */
     sec('s_history', el('div',{class:'pgrid mt',style:'grid-template-columns:1fr 1fr 1.1fr'},
@@ -3381,6 +3400,8 @@ function renderCase(){
             logAudit(c,'Query raised','Manual query','\u2014','Open');
             toast('Query raised'); go('case');
           }, html:ICON.plus+'<span>Raise query</span>'})))) ),
+
+    el('div',{class:'mt'}, outsideCareCard(c)),
 
     /* ---------- audit ---------- */
     sec('s_audit', el('div',{class:'mt'},
@@ -3509,7 +3530,8 @@ function newDraft(region='Cervical', seeded=false){
     cannabisStatus:'', cannabisYears:'',
     otherDrugs:'', otherDrugsYears:'',
     meds:[],
-    priorSurgeryYN:'No'};
+    priorSurgeryYN:'No',
+    payer:'', priorAuth:'', denialReason:'', setting:'', kyphosisYN:'No', collapsedYN:'No'};
   /* Seed the first visit with a hybrid, because the hybrid case is the one no
      existing registry can represent — it should be the first thing anyone sees. */
   if(seeded && region==='Cervical'){
@@ -3524,6 +3546,7 @@ function newDraft(region='Cervical', seeded=false){
     d.phone='(555) 204-8817'; d.email='patient4471@example.com';
     d.address='1420 Montana Ave, Santa Monica, CA 90403';
     d.referrer='Dr. L. Prasad (PM&R)'; d.consentSigned='Yes';
+    d.payer='Commercial'; d.priorAuth='Approved'; d.setting='Ambulatory surgery center';
     d.comorbidities=['Hypertension','Anxiety disorder'];
     d.tobaccoStatus='Former'; d.tobaccoPackYears='8'; d.tobaccoYears='11';
     d.alcoholStatus='Occasional (\u2264 2 /wk)'; d.alcoholYears='20';
@@ -3565,6 +3588,10 @@ const ENROLL_REQ = [
   {key:'cannabisStatus',label:'Cannabis status',    sec:'Substance use'},
   {key:'cannabisYears', label:'Years of cannabis use', sec:'Substance use', when:d=>d.cannabisStatus && d.cannabisStatus!=='Never'},
   {key:'dx',            label:'Diagnosis',          sec:'Presentation'},
+  {key:'payer',         label:'Payer',              sec:'Coverage & setting'},
+  {key:'priorAuth',     label:'Prior authorization',sec:'Coverage & setting'},
+  {key:'denialReason',  label:'Denial reason',      sec:'Coverage & setting', when:d=>d.priorAuth==='Denied'},
+  {key:'setting',       label:'Setting of care',    sec:'Coverage & setting'},
   {key:'symptomMonths', label:'Symptom duration',   sec:'Presentation'},
   {key:'levels',        label:'At least one treated level', sec:'Operative record',
     test:d=>Object.values(d.levels).some(L=>L.tx!=='none')},
@@ -3889,7 +3916,21 @@ function renderNew(){
         el('div',{class:'fgrid c3'},
           f('Diagnosis','dx',{ph:'e.g. Cervical DDD with radiculopathy'}),
           f('Symptom duration (months)','symptomMonths',{type:'number',ph:'18'}),
-          sel('Prior surgery at the index level','priorSurgeryYN',['No','Yes'],false))),
+          sel('Prior surgery at the index level','priorSurgeryYN',['No','Yes'],false)),
+        el('div',{class:'fgrid c2'},
+          sel('Kyphosis at the index level','kyphosisYN',['No','Yes'],false),
+          sel('Severely collapsed disc (under 50% of adjacent height)','collapsedYN',['No','Yes'],false))),
+
+      el('div',{class:'pcard mt'},
+        H('Coverage & setting','coverage'),
+        el('div',{class:'fgrid c3'},
+          sel('Payer','payer',PAYERS),
+          sel('Prior authorization','priorAuth',PA_RESULTS,true,true),
+          sel('Setting of care','setting',SETTINGS)),
+        draft.priorAuth==='Denied'
+          ? el('div',{class:'fgrid c2'}, sel('Denial reason','denialReason',DENIAL_REASONS),
+              el('div',{class:'hint',style:'align-self:end'},'Record the appeal and its result on the case page after saving.'))
+          : null),
 
       /* ---------------- construct ---------------- */
       el('div',{class:'sect mt'},
@@ -4005,7 +4046,14 @@ function renderNew(){
         months: m.start? Math.max(0, Math.round((Date.now()-new Date(m.start+'-01'))/(30.44*864e5))) : null})),
       tests:[], visitsExtra:[], aes:[], queries:[], audit:[],
       external:{linked:false, outsideEvents:[]},
+      kyphosis: draft.kyphosisYN==='Yes', collapsedDisc: draft.collapsedYN==='Yes',
+      access:{payer:draft.payer||'', plannedArthroplasty:true, priorAuth:draft.priorAuth||'',
+        denialReason: draft.priorAuth==='Denied'? draft.denialReason||'' : '', appeal:'None', appealResult:'',
+        daysToDecision:null, outcome: draft.priorAuth==='Denied'? '' : (draft.priorAuth? 'Proceeded as planned' : '')},
+      periop:{setting:draft.setting||'', dischargeHours:null, sameDay:null, ed30:null, readmit30:null, readmit90:null},
+      outsideCare:[],
     };
+    nc.access.plannedArthroplasty = isMotionCase(nc);
     logAudit(nc,'Created','record');
     ALL_CASES.push(nc); applyScope(); draft=null; clearDraftLocal();
     openCase(nc.id);
@@ -4724,6 +4772,578 @@ function siteStats(){
   }).sort((a,b)=>b.n-a.n);
 }
 
+/* =====================================================================
+   INDICATIONS, ACCESS, SETTING OF CARE, OUTSIDE CARE, BENCHMARKS
+   Added Nov 2026. Every new demo value comes from its own seeded stream,
+   so the cohort generated above stays exactly as it was.
+   ===================================================================== */
+const PAYERS = ['Commercial','Medicare','Medicare Advantage','Medicaid',"Workers' compensation",'VA / TRICARE','Self-pay'];
+const PA_RESULTS = ['Approved','Denied','Not required','Pending'];
+const DENIAL_REASONS = ['Not medically necessary','Considered experimental / investigational',
+  'More levels than the policy covers','Age outside policy','Conservative care not documented',
+  'Imaging criteria not met','Prior surgery at the level'];
+const APPEALS = ['None','Peer-to-peer review','Written appeal','External review'];
+const APPEAL_RESULTS = ['Overturned','Upheld','Pending'];
+const ACCESS_OUTCOMES = ['Proceeded as planned','Proceeded after appeal','Self-pay',
+  'Converted to fusion after denial','Delayed','Cancelled'];
+const SETTINGS = ['Ambulatory surgery center','Hospital outpatient','Inpatient'];
+
+const isMotionCase = c => c.construct.mobile>0 && !['fusion','decomp','none'].includes(c.construct.family);
+
+function seedExtras(c, i){
+  const r = mulberry32(5150 + i*97);
+  const P = p => r()<p, R = (a,b)=>a+r()*(b-a), I = (a,b)=>Math.floor(R(a,b+1)), K = a=>a[Math.floor(r()*a.length)];
+  const motion = isMotionCase(c), lum = c.region==='Lumbar';
+  const adrN = Object.values(c.levels).filter(L=>L.tx==='adr').length;
+
+  c.kyphosis = c.region==='Cervical' && P(.08);
+  c.collapsedDisc = P(.06);
+
+  /* payer */
+  let payer;
+  if(c.workersComp) payer="Workers' compensation";
+  else if(c.age>=65) payer = P(.55)? 'Medicare' : 'Medicare Advantage';
+  else payer = P(.80)? 'Commercial' : K(['Medicaid','Medicaid','VA / TRICARE','Self-pay']);
+
+  /* prior authorization and what happened next */
+  const a = {payer, plannedArthroplasty: motion, priorAuth:'Approved', denialReason:'', appeal:'None',
+    appealResult:'', daysToDecision:I(3,18), outcome:'Proceeded as planned'};
+  if(payer==='Self-pay' || (payer==='Medicare' && !lum)){ a.priorAuth='Not required'; a.daysToDecision=null; }
+  else if(motion){
+    const pDeny = c.construct.family==='facet' ? .32 : lum ? (adrN>1? .42 : .26) : (adrN>2? .5 : adrN===2? .17 : .07);
+    if(P(pDeny + (c.age>=60 && lum ? .25 : 0))){
+      a.priorAuth='Denied';
+      a.denialReason = adrN>2 || (lum && adrN>1) ? DENIAL_REASONS[2]
+        : c.age>=60 && lum ? DENIAL_REASONS[3] : K([DENIAL_REASONS[0],DENIAL_REASONS[0],DENIAL_REASONS[1],DENIAL_REASONS[4],DENIAL_REASONS[5]]);
+      if(P(.12)){ a.outcome='Self-pay'; a.appeal='None'; }
+      else { a.appeal=K(['Peer-to-peer review','Peer-to-peer review','Written appeal','External review']);
+        a.appealResult='Overturned'; a.outcome='Proceeded after appeal'; }
+      a.daysToDecision = I(21,84);
+    }
+  } else if(c.construct.family==='fusion' && P(.4)){
+    /* arthroplasty was the plan, the payer said no, the patient was fused */
+    a.plannedArthroplasty=true; a.priorAuth='Denied';
+    a.denialReason = lum? K([DENIAL_REASONS[1],DENIAL_REASONS[0],DENIAL_REASONS[3]]) : K([DENIAL_REASONS[0],DENIAL_REASONS[2]]);
+    a.appeal = K(['None','Peer-to-peer review','Written appeal']);
+    a.appealResult = a.appeal==='None'? '' : 'Upheld';
+    a.outcome='Converted to fusion after denial'; a.daysToDecision=I(25,90);
+  }
+  c.access = a;
+
+  /* setting of care — outpatient arthroplasty grew over the last decade */
+  const yrs = c.daysSince/365;
+  let w = lum ? (c.construct.family==='adr'? [.12,.40,.48] : [.03,.27,.70])
+              : (c.construct.indexLevels.length<=2? [.36,.46,.18] : [.10,.45,.45]);
+  if(yrs>6) w=[w[0]*.3, w[1], w[2]+w[0]*.7];
+  const u=r(), setting = u<w[0]? SETTINGS[0] : u<w[0]+w[1]? SETTINGS[1] : SETTINGS[2];
+  const hrs = setting===SETTINGS[0]? I(3,7) : setting===SETTINGS[1]? I(6,23) : I(24, lum?96:54);
+  const ed30 = P(setting===SETTINGS[2]? .06 : .04);
+  const re30 = P(setting===SETTINGS[2]? .04 : .02);
+  c.periop = {setting, dischargeHours:hrs, sameDay: hrs<24, ed30, readmit30:re30, readmit90: re30 || P(.015)};
+
+  /* care elsewhere, reported by the patient at follow-up */
+  c.outsideCare = [];
+  TIMEPOINTS.forEach(tp=>{
+    if(tp.k==='pre' || !c.proms[tp.k]) return;
+    if(!P(.05)) return;
+    const rep = {tp:tp.k, date:new Date(c.date.getTime()+tp.days*864e5).toISOString().slice(0,10),
+      er:P(.55), admitted:P(.2), surgery:false, injection:P(.45), where:K(['Urgent care near home','Another hospital','Pain clinic','Out-of-state hospital']),
+      details:'', status: (c.daysSince-tp.days)<300? 'To verify' : K(['Verified — spine related','Verified — not spine related'])};
+    if(!rep.er && !rep.admitted && !rep.injection) rep.er=true;
+    c.outsideCare.push(rep);
+  });
+  (c.external && c.external.outsideEvents || []).forEach(e=>{
+    c.outsideCare.push({tp:null, date:e.date, er:false, admitted:true, surgery:true, injection:false,
+      where:e.facility, details:e.type, status:'Verified — spine related'});
+  });
+  c.outsideCare.sort((x,y)=>x.date<y.date?-1:1);
+  return c;
+}
+DEMO_CASES.forEach((c,i)=>seedExtras(c,i));
+
+/* fill in the newer fields on records saved before they existed */
+function ensureExtras(c){
+  if(!c.access) c.access = {payer:'', plannedArthroplasty:isMotionCase(c), priorAuth:'', denialReason:'', appeal:'None',
+    appealResult:'', daysToDecision:null, outcome:''};
+  if(!c.periop) c.periop = {setting:'', dischargeHours:null, sameDay:null, ed30:null, readmit30:null, readmit90:null};
+  if(!Array.isArray(c.outsideCare)) c.outsideCare = [];
+  if(c.kyphosis==null) c.kyphosis=false;
+  if(c.collapsedDisc==null) c.collapsedDisc=false;
+  return c;
+}
+
+/* ---------------- indication category ----------------
+   Compared with the general FDA labeling for each device class. Labels
+   differ between devices, so this is a screening flag for analysis, and the
+   case page says so. */
+const IND = {
+  levels:   'More than 2 disc replacement levels',
+  outside:  'Level outside labeled range',
+  hybrid:   'Hybrid with fusion',
+  combined: 'Disc plus facet replacement',
+  facetML:  'Multilevel facet arthroplasty',
+  age:      'Age 60 or older',
+  bone:     'Low bone density',
+  prior:    'Prior surgery at the index level',
+  kyph:     'Index-level kyphosis',
+  collapsed:'Severely collapsed disc',
+  spondy:   'Spondylolisthesis treated with disc replacement',
+};
+function indicationOf(c){
+  if(!isMotionCase(c)) return {cat:'comparator', label:'Fusion or decompression (comparator)', flags:[]};
+  const lv = c.levels, keys = Object.keys(lv);
+  const adr = keys.filter(l=>lv[l].tx==='adr'), fac = keys.filter(l=>lv[l].tx==='facet');
+  const f = [];
+  if(adr.length>2) f.push('levels');
+  const okC = ['C3-C4','C4-C5','C5-C6','C6-C7'], okL = ['L3-L4','L4-L5','L5-S1'];
+  if(adr.some(l=> c.region==='Cervical'? !okC.includes(l) : !okL.includes(l))) f.push('outside');
+  if(fac.some(l=>!['L3-L4','L4-L5'].includes(l))) f.push('outside');
+  if(c.construct.family==='hybrid') f.push('hybrid');
+  if(adr.length && fac.length) f.push('combined');
+  if(fac.length>1) f.push('facetML');
+  if(c.age>=60) f.push('age');
+  if((c.tScore!=null && c.tScore<=-2.5) || c.osteoporosis) f.push('bone');
+  if(c.priorSurgery) f.push('prior');
+  if(c.kyphosis) f.push('kyph');
+  if(c.collapsedDisc) f.push('collapsed');
+  if(adr.length && c.region==='Lumbar' && /spondylolisthesis/i.test(c.dx||'')) f.push('spondy');
+  const flags=[...new Set(f)];
+  return {cat: flags.length? 'expanded' : 'on', label: flags.length? 'Expanded indication' : 'Within labeled indication', flags};
+}
+function indicationChip(c){
+  const ind = indicationOf(c);
+  if(ind.cat==='comparator') return el('span',{class:'st mute'},'Comparator');
+  return ind.cat==='on' ? el('span',{class:'st good'},'Within label')
+                        : el('span',{class:'st warn'},'Expanded · '+ind.flags.length);
+}
+
+/* ---------------- per-case outcomes used by every table below ---------------- */
+function outcomeOf(c){
+  const pre=c.proms.pre, y1=c.proms['1y'];
+  const d1 = pre && y1 ? pre.primary - y1.primary : null;
+  const due1 = c.daysSince>=365;
+  const motion = isMotionCase(c);
+  const r2 = motion && c.radio['2y'] ? romAt(c,'2y') : null;
+  const surgOut = (c.outsideCare||[]).some(o=>o.surgery && /^Verified/.test(o.status));
+  return {
+    d1, mcid1: d1==null? null : d1>=MCID(c),
+    cap1: due1? !!y1 : null,
+    mobile2: r2==null? null : r2>=MOBILE_THRESHOLD,
+    ho3: motion && c.region==='Cervical' ? c.hoGrade>=3 : null,
+    reop: !!c.reop || surgOut,
+    sae: (c.aes||[]).some(a=>a.serious==='Yes'),
+    complete: completeness(c).pct,
+  };
+}
+const share = (arr, key) => { const v=arr.map(o=>o[key]).filter(x=>x!=null); return {n:v.filter(Boolean).length, d:v.length}; };
+const pctCell = (s, minD=1) => s.d<minD? '—' : `${Math.round(100*s.n/s.d)}%`;
+const pctCellN = s => s.d? el('span',{}, `${Math.round(100*s.n/s.d)}%`, el('span',{class:'hint',style:'margin:0 0 0 6px;display:inline'},`${s.n}/${s.d}`)) : '—';
+function medianOf(a){ return median(a.filter(x=>x!=null)); }
+function csvOf(cols, rows){
+  const q = v => { const s = v==null? '' : String(v); return /[",\n]/.test(s)? '"'+s.replace(/"/g,'""')+'"' : s; };
+  return [cols.map(q).join(','), ...rows.map(r=>r.map(q).join(','))].join('\n');
+}
+function dlBtn(label, name, cols, rows, n){
+  return el('button',{class:'btn sec sm',type:'button',onclick:()=>{
+    if(downloadText(name, csvOf(cols,rows))){ logExport(label, n); toast('Downloaded '+name); }
+  }},'Download CSV');
+}
+
+/* =============== INDICATIONS & ACCESS SCREEN =============== */
+function indicationRows(cs){
+  const groups = [['Within labeled indication', cs.filter(c=>indicationOf(c).cat==='on')],
+    ['Any expanded indication', cs.filter(c=>indicationOf(c).cat==='expanded')],
+    ...Object.entries(IND).map(([k,lab])=>['   '+lab, cs.filter(c=>indicationOf(c).flags.includes(k))]),
+    ['Fusion or decompression (comparator)', cs.filter(c=>indicationOf(c).cat==='comparator')]];
+  return groups.map(([lab, g])=>{
+    const o=g.map(outcomeOf);
+    const d=o.map(x=>x.d1).filter(x=>x!=null);
+    return {lab, n:g.length, mcid:share(o,'mcid1'), dMean: d.length? mean(d) : null,
+      mobile:share(o,'mobile2'), ho:share(o,'ho3'), reop:share(o,'reop'), cap:share(o,'cap1')};
+  });
+}
+function renderAccess(){
+  const cs = CASES.map(ensureExtras);
+  const motion = cs.filter(isMotionCase);
+  const expanded = motion.filter(c=>indicationOf(c).cat==='expanded');
+  const needPA = cs.filter(c=>c.access.priorAuth && c.access.priorAuth!=='Not required');
+  const denied = needPA.filter(c=>c.access.priorAuth==='Denied');
+  const overturned = denied.filter(c=>c.access.appealResult==='Overturned');
+  const deniedFused = cs.filter(c=>c.access.outcome==='Converted to fusion after denial');
+  const withSetting = cs.filter(c=>c.periop.setting);
+  const sameDay = withSetting.filter(c=>c.periop.sameDay);
+
+  /* ---- indications table ---- */
+  const ir = indicationRows(cs);
+  const indTbl = tableEl([
+      {label:'Indication',key:'lab'},{label:'Patients',key:'n',num:true,mono:true},
+      {label:'Reached MCID at 1 yr',key:'mcid',num:true},{label:'Mean improvement at 1 yr',key:'dm',num:true,mono:true},
+      {label:'Still moving at 2 yr',key:'mob',num:true},{label:'HO grade III–IV',key:'ho',num:true},
+      {label:'Secondary surgery',key:'re',num:true}],
+    ir.filter(r=>r.n>0).map(r=>({
+      lab: /^   /.test(r.lab)? el('span',{style:'padding-left:16px;color:var(--ink-2)'}, r.lab.trim())
+         : el('strong',{}, r.lab),
+      n: r.n<10? el('span',{}, String(r.n), el('span',{class:'tag o',style:'margin-left:6px;font-size:10px'},'small')) : String(r.n),
+      mcid:pctCellN(r.mcid), dm: r.dMean==null?'—':fmt(r.dMean,1),
+      mob:pctCellN(r.mobile), ho:pctCellN(r.ho), re:pctCellN(r.reop)})));
+  const indCsv = ()=>dlBtn('Outcomes by indication','gsasg_outcomes_by_indication.csv',
+    ['Indication','Patients','MCID 1yr n','MCID 1yr denominator','Mean improvement 1yr','Mobile 2yr n','Mobile 2yr denominator',
+     'HO III-IV n','HO denominator','Secondary surgery n','Secondary surgery denominator','1yr captured n','1yr due'],
+    ir.map(r=>[r.lab.trim(), r.n, r.mcid.n, r.mcid.d, r.dMean==null?'':r.dMean.toFixed(1), r.mobile.n, r.mobile.d,
+      r.ho.n, r.ho.d, r.reop.n, r.reop.d, r.cap.n, r.cap.d]), cs.length);
+
+  /* ---- coverage by payer ---- */
+  const payRows = PAYERS.map(p=>{
+    const g=cs.filter(c=>c.access.payer===p); if(!g.length) return null;
+    const pa=g.filter(c=>c.access.priorAuth && c.access.priorAuth!=='Not required');
+    const dn=pa.filter(c=>c.access.priorAuth==='Denied');
+    const ov=dn.filter(c=>c.access.appealResult==='Overturned');
+    const fz=g.filter(c=>c.access.outcome==='Converted to fusion after denial');
+    return {p, n:g.length, pa:pa.length, appr:{n:pa.length-dn.length,d:pa.length}, den:{n:dn.length,d:pa.length},
+      ov:{n:ov.length,d:dn.length}, fz:fz.length, days: medianOf(pa.map(c=>c.access.daysToDecision))};
+  }).filter(Boolean);
+  const payTbl = tableEl([
+      {label:'Payer',key:'p'},{label:'Patients',key:'n',num:true,mono:true},{label:'Prior auth required',key:'pa',num:true,mono:true},
+      {label:'Approved first time',key:'appr',num:true},{label:'Denied',key:'den',num:true},
+      {label:'Overturned on appeal',key:'ov',num:true},{label:'Fused after denial',key:'fz',num:true,mono:true},
+      {label:'Median days to decision',key:'days',num:true,mono:true}],
+    payRows.map(r=>({p:el('strong',{},r.p), n:String(r.n), pa:String(r.pa), appr:pctCellN(r.appr), den:pctCellN(r.den),
+      ov:pctCellN(r.ov), fz:String(r.fz), days: r.days==null?'—':String(Math.round(r.days))})));
+  const reasons = DENIAL_REASONS.map(x=>({label:x, value:denied.filter(c=>c.access.denialReason===x).length}))
+    .filter(b=>b.value>0).sort((a,b)=>b.value-a.value);
+
+  /* denied-and-fused against approved arthroplasty */
+  const approvedMp = motion.filter(c=>c.access.priorAuth==='Approved' || c.access.outcome==='Proceeded after appeal');
+  const cmp = [['Arthroplasty performed', approvedMp], ['Fused after denial', deniedFused]].map(([lab,g])=>{
+    const o=g.map(outcomeOf); const d=o.map(x=>x.d1).filter(x=>x!=null);
+    return {lab, n:g.length, mcid:share(o,'mcid1'), dm:d.length?mean(d):null, re:share(o,'reop')};
+  });
+
+  /* ---- setting of care ---- */
+  const setRows = SETTINGS.map(s=>{
+    const g=cs.filter(c=>c.periop.setting===s); if(!g.length) return null;
+    const P=k=>({n:g.filter(c=>c.periop[k]).length, d:g.length});
+    return {s, n:g.length, hrs:medianOf(g.map(c=>c.periop.dischargeHours)), same:P('sameDay'), ed:P('ed30'), r30:P('readmit30'), r90:P('readmit90')};
+  }).filter(Boolean);
+  const setTbl = tableEl([
+      {label:'Setting',key:'s'},{label:'Patients',key:'n',num:true,mono:true},{label:'Median hours to discharge',key:'h',num:true,mono:true},
+      {label:'Home the same day',key:'same',num:true},{label:'ED visit ≤ 30 days',key:'ed',num:true},
+      {label:'Readmitted ≤ 30 days',key:'r30',num:true},{label:'Readmitted ≤ 90 days',key:'r90',num:true}],
+    setRows.map(r=>({s:el('strong',{},r.s), n:String(r.n), h:r.hrs==null?'—':String(Math.round(r.hrs)),
+      same:pctCellN(r.same), ed:pctCellN(r.ed), r30:pctCellN(r.r30), r90:pctCellN(r.r90)})));
+
+  return el('div',{},
+    el('div',{class:'sect'},
+      el('p',{},'The evidence payers and FDA ask for before they widen access: outcomes in patients outside today’s labeled indications, what insurers decide and why, and how patients do by setting of care.')),
+    el('div',{class:'grid g4'},
+      tile('Expanded indications', motion.length? pct(expanded.length,motion.length)+'%' : '—',
+        `${expanded.length} of ${motion.length} motion-preservation patients`),
+      tile('Prior authorization denied', needPA.length? pct(denied.length,needPA.length)+'%' : '—',
+        `${denied.length} of ${needPA.length} requests`),
+      tile('Denials overturned', denied.length? pct(overturned.length,denied.length)+'%' : '—',
+        `${overturned.length} won on appeal`),
+      tile('Home the same day', withSetting.length? pct(sameDay.length,withSetting.length)+'%' : '—',
+        `${sameDay.length} of ${withSetting.length} with setting recorded`)),
+
+    el('div',{class:'mt'}, card('Outcomes by indication',
+      'Indications are compared with the general FDA labeling for each device class; device labels differ, so treat these as screening categories. A patient can carry more than one expanded indication. Groups under 10 patients are marked small.',
+      indTbl, el('div',{class:'row',style:'margin-top:12px'}, indCsv()))),
+
+    el('div',{class:'mt'}, card('Coverage by payer','Prior-authorization decisions, appeals and what happened to the patient.',
+        payTbl, el('div',{class:'row',style:'margin-top:12px'},
+          dlBtn('Coverage by payer','gsasg_coverage_by_payer.csv',
+            ['Payer','Patients','Prior auth required','Approved first time','Denied','Overturned on appeal','Fused after denial','Median days to decision'],
+            payRows.map(r=>[r.p,r.n,r.pa,r.appr.n,r.den.n,r.ov.n,r.fz,r.days==null?'':Math.round(r.days)]), cs.length)))),
+    el('div',{class:'grid mt accgrid'},
+      card('Why requests were denied', `${denied.length} denials`,
+        reasons.length? barsH({bars:reasons.map(b=>({...b,unit:'Denials'})), labelW:230, width:520}) : el('div',{class:'empty'},'No denials recorded')),
+      card('Patients fused after an arthroplasty denial',
+      'These patients were planned for motion preservation and fused because the insurer declined. The insurer, rather than the surgeon, chose their treatment, which makes them an unusually clean comparison group.',
+      tableEl([{label:'Group',key:'lab'},{label:'Patients',key:'n',num:true,mono:true},{label:'Reached MCID at 1 yr',key:'m',num:true},
+               {label:'Mean improvement at 1 yr',key:'d',num:true,mono:true},{label:'Secondary surgery',key:'r',num:true}],
+        cmp.map(r=>({lab:el('strong',{},r.lab), n:String(r.n), m:pctCellN(r.mcid), d:r.dm==null?'—':fmt(r.dm,1), r:pctCellN(r.re)}))),
+      el('div',{class:'hint',style:'margin-top:10px'},'Unadjusted. Payer, age and region differ between the groups, so any paper needs matching or adjustment.'))),
+    el('div',{class:'mt'}, card('Setting of care','Ambulatory surgery center, hospital outpatient or inpatient, with discharge timing and returns to hospital.',
+      setTbl, el('div',{class:'row',style:'margin-top:12px'},
+        dlBtn('Outcomes by setting','gsasg_setting_of_care.csv',
+          ['Setting','Patients','Median hours to discharge','Same day','ED 30d','Readmit 30d','Readmit 90d'],
+          setRows.map(r=>[r.s,r.n,r.hrs==null?'':Math.round(r.hrs),r.same.n,r.ed.n,r.r30.n,r.r90.n]), cs.length))))
+  );
+}
+
+/* =============== BENCHMARKS =============== */
+const BENCH = [
+  {k:'cap1',   label:'1-year follow-up captured', better:'high'},
+  {k:'mcid1',  label:'Reached MCID at 1 year',    better:'high'},
+  {k:'mobile2',label:'Still moving at 2 years',   better:'high'},
+  {k:'reop',   label:'Secondary surgery',         better:'low'},
+  {k:'sae',    label:'Serious adverse event',     better:'low'},
+  {k:'complete',label:'Record completeness',      better:'high', avg:true},
+];
+const BENCH_MIN = 5;   /* units with fewer eligible patients are left out of the distribution */
+function benchUnit(cs){
+  const o=cs.map(outcomeOf), out={n:cs.length};
+  BENCH.forEach(m=>{
+    if(m.avg){ out[m.k]={v:o.length? mean(o.map(x=>x.complete)) : null, d:o.length}; return; }
+    const s=share(o,m.k); out[m.k]={v: s.d? 100*s.n/s.d : null, d:s.d, n:s.n};
+  });
+  return out;
+}
+function benchDistribution(all){
+  const by = (keyFn)=>{ const g={}; all.forEach(c=>{ const k=keyFn(c); (g[k]=g[k]||[]).push(c); }); return Object.values(g).map(benchUnit); };
+  const dist = units => Object.fromEntries(BENCH.map(m=>[m.k, units.filter(u=>u[m.k].d>=BENCH_MIN && u[m.k].v!=null).map(u=>+u[m.k].v.toFixed(1))]));
+  const s=by(c=>c.surgeon), t=by(c=>c.site), reg=benchUnit(all);
+  return {at:new Date().toISOString(), surgeons:dist(s), sites:dist(t), registry:Object.fromEntries(BENCH.map(m=>[m.k, reg[m.k].v])),
+    nSurgeons:s.length, nSites:t.length, cases:all.length};
+}
+function stripPlot(values, mine, better){
+  const W=280, H=34, M=10, x=v=>M+(W-2*M)*v/100;
+  const svg=svgEl('svg',{viewBox:`0 0 ${W} ${H}`,width:'100%',style:'max-width:300px;display:block',role:'img',
+    'aria-label':'Where this value sits among all units'});
+  svg.append(svgEl('line',{x1:M,x2:W-M,y1:H/2,y2:H/2,stroke:CSS('--grid'),'stroke-width':2,'stroke-linecap':'round'}));
+  values.forEach(v=>svg.append(svgEl('circle',{cx:x(v),cy:H/2,r:4.5,fill:CSS('--muted')||'#8a96a3',opacity:.55})));
+  if(mine!=null){
+    const c=svgEl('circle',{cx:x(mine),cy:H/2,r:7,fill:CSS('--s1'),stroke:CSS('--surface'),'stroke-width':2});
+    const t=svgEl('title'); t.textContent=Math.round(mine)+'%'; c.append(t); svg.append(c);
+  }
+  [0,50,100].forEach(v=>{ const tx=svgEl('text',{x:x(v),y:H-1,'font-size':8.5,fill:CSS('--muted'),'text-anchor':'middle'}); tx.textContent=v+'%'; svg.append(tx); });
+  return svg;
+}
+let benchMode='surgeon', benchWho=null, benchRemote, benchLoading=false;
+async function loadBench(){
+  if(benchLoading) return; benchLoading=true;
+  const {data,error}=await sb.from('benchmarks').select('data,published_at').eq('id',1).maybeSingle();
+  benchLoading=false;
+  benchRemote = error? {error:error.message} : (data? {...data.data, at:data.published_at} : null);
+  if(current==='bench') go('bench');
+}
+async function publishBench(dist){
+  const {error}=await sb.from('benchmarks').upsert({id:1, data:dist, published_at:new Date().toISOString(),
+    published_by:currentUser.email||currentUser.name});
+  if(error){ toast('Not published — '+error.message); return; }
+  benchRemote={...dist}; toast('Benchmarks published to every site'); go('bench');
+}
+function renderBench(){
+  const all = ALL_CASES.map(ensureExtras);
+  let dist;
+  if(!LIVE || isINI()) dist = benchDistribution(all);
+  else {
+    if(benchRemote===undefined){ loadBench(); return el('div',{class:'empty'},'Loading registry benchmarks…'); }
+    dist = benchRemote && !benchRemote.error ? benchRemote : null;
+  }
+  const units = benchMode==='surgeon' ? scopedSurgeons().filter(s=>CASES.some(c=>c.surgeon===s))
+                                      : SITES.filter(s=>CASES.some(c=>c.site===s));
+  if(!units.includes(benchWho)) benchWho = units[0]||null;
+  const mineCases = CASES.filter(c=> benchMode==='surgeon'? c.surgeon===benchWho : c.site===benchWho);
+  const mine = benchUnit(mineCases);
+  const values = dist? (benchMode==='surgeon'? dist.surgeons : dist.sites) : null;
+
+  const rows = BENCH.map(m=>{
+    const v = mine[m.k].v, vals = values? values[m.k]||[] : [];
+    const med = medianOf(vals);
+    let pos=null;
+    if(v!=null && vals.length>1){
+      const better = vals.filter(x=> m.better==='high'? x<v : x>v).length;
+      pos = Math.round(100*better/vals.length);
+    }
+    const thin = mine[m.k].d < BENCH_MIN;
+    return el('div',{class:'benchrow'},
+      el('div',{}, el('strong',{},m.label),
+        el('div',{class:'hint',style:'margin:2px 0 0'}, m.better==='high'?'Higher is better':'Lower is better')),
+      el('div',{class:'bv'}, v==null? el('span',{class:'unrec'},'no data') : el('span',{}, el('b',{},Math.round(v)+'%'),
+        m.avg? null : el('span',{class:'hint',style:'margin:0 0 0 6px;display:inline'}, `${mine[m.k].n}/${mine[m.k].d}`))),
+      el('div',{class:'bv'}, med==null? '—' : el('span',{}, Math.round(med)+'%', el('div',{class:'hint',style:'margin:0'},'registry median'))),
+      el('div',{}, values? stripPlot(vals, thin? null : v, m.better) : null,
+        el('div',{class:'hint',style:'margin:2px 0 0'},
+          thin? `Fewer than ${BENCH_MIN} eligible patients, so not placed on the scale yet`
+              : pos==null? '' : `Better than ${pos}% of ${benchMode==='surgeon'?'surgeons':'sites'}`)));
+  });
+
+  const head = el('div',{class:'row',style:'gap:12px;flex-wrap:wrap;margin-bottom:14px'},
+    el('div',{class:'chips'}, [['surgeon','Surgeons'],['site','Sites']].map(([k,lab])=>
+      el('button',{class:'chip',type:'button','aria-pressed':String(benchMode===k),onclick:()=>{benchMode=k; benchWho=null; go('bench');}},lab))),
+    el('label',{class:'f',style:'margin:0;min-width:240px'},
+      el('select',{class:'inp',onchange:e=>{benchWho=e.target.value; go('bench');}},
+        units.map(u=>el('option',{value:u,selected:u===benchWho?'selected':null}, benchMode==='site'? siteShort(u) : u)))),
+    el('div',{class:'spacer'}),
+    LIVE && isINI()? el('button',{class:'btn sm',type:'button',onclick:()=>publishBench(dist)},'Publish benchmarks to sites') : null);
+
+  return el('div',{},
+    el('div',{class:'sect'},
+      el('p',{}, 'Each surgeon and site sees their own results against the registry distribution. Every other surgeon and site appears only as an unlabeled dot.')),
+    head,
+    !dist? el('div',{class:'banner',style:'margin-bottom:14px'}, el('span',{html:ICON.info}),
+      el('div',{}, benchRemote && benchRemote.error? 'Registry benchmarks could not be loaded: '+benchRemote.error
+        : 'Registry benchmarks appear here once INI publishes them. Your own results are shown below.')) : null,
+    card((benchMode==='surgeon'? benchWho : siteShort(benchWho)) || 'No cases yet',
+      `${mineCases.length} patients`+(dist? ` · compared with ${benchMode==='surgeon'? dist.surgeons.cap1.length+' surgeons' : dist.sites.cap1.length+' sites'} across ${dist.cases} registry patients`:'')
+        + (dist && dist.at? ` · benchmarks as of ${new Date(dist.at).toLocaleDateString('en-US')}`:''),
+      el('div',{class:'benchhead'}, el('div',{},'Measure'), el('div',{},'Yours'), el('div',{},'Registry'), el('div',{},'Where you sit')),
+      ...rows),
+    el('div',{class:'hint',style:'margin-top:12px'},`Unadjusted rates. Units with fewer than ${BENCH_MIN} eligible patients are left out of the registry distribution. Risk adjustment for age, region and construct comes with the first annual report.`));
+}
+
+/* =============== CASE PAGE: edit modals and cards =============== */
+function editAccess(c){
+  ensureExtras(c);
+  const st = {...c.access, daysToDecision: c.access.daysToDecision??'',
+    plannedArthroplasty: c.access.plannedArthroplasty? 'Yes':'No'};
+  openModal({title:'Coverage & access', sub:'What the insurer decided, and what happened to the plan.',
+    build:()=>({node: el('div',{},
+      el('div',{class:'fgrid c2'},
+        mSelect('Payer',st,'payer',PAYERS),
+        mSelect('Arthroplasty was the planned treatment',st,'plannedArthroplasty',['Yes','No'],{blank:false})),
+      el('div',{class:'fgrid c3'},
+        mSelect('Prior authorization',st,'priorAuth',PA_RESULTS),
+        mSelect('Denial reason',st,'denialReason',DENIAL_REASONS,{hint:'Only if denied'}),
+        mField('Days from request to decision',st,'daysToDecision',{type:'number',min:0})),
+      el('div',{class:'fgrid c3'},
+        mSelect('Appeal',st,'appeal',APPEALS,{blank:false}),
+        mSelect('Appeal result',st,'appealResult',APPEAL_RESULTS),
+        mSelect('What happened',st,'outcome',ACCESS_OUTCOMES))), get:()=>st}),
+    saveLabel:'Save',
+    onSave:v=>{
+      const prev = JSON.stringify(c.access);
+      c.access = {...v, plannedArthroplasty: v.plannedArthroplasty==='Yes',
+        daysToDecision: v.daysToDecision===''? null : +v.daysToDecision};
+      logAudit(c,'Coverage updated','access', prev==='{}'?'—':'previous', 'updated');
+      toast('Coverage saved'); go('case');
+    }});
+}
+function editPeriop(c){
+  ensureExtras(c);
+  const yn = b => b==null? '' : b? 'Yes':'No';
+  const st = {setting:c.periop.setting||'', dischargeHours:c.periop.dischargeHours??'',
+    ed30:yn(c.periop.ed30), readmit30:yn(c.periop.readmit30), readmit90:yn(c.periop.readmit90),
+    kyphosis:yn(c.kyphosis), collapsedDisc:yn(c.collapsedDisc)};
+  openModal({title:'Setting of care & indication detail', sub:'Where the operation was done, how soon the patient went home, and two imaging findings that affect the indication.',
+    build:()=>({node: el('div',{},
+      el('div',{class:'subcard'}, el('h5',{},'Setting of care'),
+        el('div',{class:'fgrid c2'},
+          mSelect('Setting',st,'setting',SETTINGS),
+          mField('Hours from end of surgery to discharge',st,'dischargeHours',{type:'number',min:0})),
+        el('div',{class:'fgrid c3'},
+          mSelect('ED visit within 30 days',st,'ed30',['No','Yes']),
+          mSelect('Readmitted within 30 days',st,'readmit30',['No','Yes']),
+          mSelect('Readmitted within 90 days',st,'readmit90',['No','Yes']))),
+      el('div',{class:'subcard'}, el('h5',{},'Indication detail'),
+        el('div',{class:'fgrid c2'},
+          mSelect('Kyphosis at the index level',st,'kyphosis',['No','Yes']),
+          mSelect('Severely collapsed disc (under 50% of adjacent height)',st,'collapsedDisc',['No','Yes'])))), get:()=>st}),
+    saveLabel:'Save',
+    onSave:v=>{
+      const b = s => s===''? null : s==='Yes';
+      const h = v.dischargeHours===''? null : +v.dischargeHours;
+      c.periop = {setting:v.setting, dischargeHours:h, sameDay: h==null? null : h<24,
+        ed30:b(v.ed30), readmit30:b(v.readmit30), readmit90: b(v.readmit90) || b(v.readmit30)};
+      c.kyphosis = v.kyphosis==='Yes'; c.collapsedDisc = v.collapsedDisc==='Yes';
+      logAudit(c,'Setting of care updated','periop','—','updated');
+      toast('Saved'); go('case');
+    }});
+}
+function verifyOutside(c, rep){
+  const st = {status: /^Verified/.test(rep.status)? rep.status : '', event:'', details: rep.details||''};
+  openModal({title:'Verify care reported by the patient', sub:`Reported ${rep.date}${rep.tp? ' at the '+TP[rep.tp].label+' check-in':''} · ${rep.where||'place not given'}`,
+    build:()=>({node: el('div',{},
+      el('div',{class:'fgrid c2'},
+        mSelect('Result of verification',st,'status',['Verified — spine related','Verified — not spine related','Could not verify'],{blank:false}),
+        mSelect('If it was spine surgery, record it as',st,'event',OUTSIDE_EVENTS,{hint:'Adds it to outside surgeries, so it counts toward secondary surgery'})),
+      mArea('What the records show',st,'details','Facility, date, procedure, diagnosis…')), get:()=>st}),
+    saveLabel:'Save verification',
+    onSave:v=>{
+      const prev=rep.status;
+      rep.status=v.status||'Verified — spine related'; rep.details=v.details;
+      if(v.event){
+        rep.surgery=true;
+        c.external=c.external||{linked:false,outsideEvents:[]};
+        c.external.outsideEvents.push({date:rep.date, type:v.event, facility:rep.where||'Outside facility', source:'Patient self-report'});
+      }
+      logAudit(c,'Outside care verified','outsideCare',prev,rep.status);
+      toast('Verification saved'); go('case');
+    }});
+}
+function outsideCareCard(c){
+  ensureExtras(c);
+  const yes = (b,t)=> b? t : null;
+  const pending = c.outsideCare.filter(o=>o.status==='To verify').length;
+  return el('div',{class:'pcard'},
+    el('h4',{},'Care elsewhere, reported by the patient'),
+    c.outsideCare.length
+      ? tableEl([{label:'Reported',key:'d',mono:true},{label:'What',key:'w'},{label:'Where',key:'p'},{label:'Status',key:'s'}],
+          c.outsideCare.slice().reverse().map(o=>({d:o.date,
+            w: [yes(o.er,'ER visit'),yes(o.admitted,'Hospital stay'),yes(o.surgery,'Spine surgery'),yes(o.injection,'Injection')].filter(Boolean).join(', ')||'—',
+            p: o.where||'—',
+            s: o.status==='To verify'
+              ? el('button',{class:'btn sm',type:'button',onclick:()=>verifyOutside(c,o)},'Verify')
+              : el('span',{class:'st '+(/not spine/.test(o.status)?'mute':/Could not/.test(o.status)?'warn':'good')}, o.status.replace('Verified — ','')) })))
+      : el('div',{class:'hint'},'Nothing reported. The patient is asked at every follow-up, in the portal and at visits.'),
+    pending? el('div',{class:'hint',style:'margin-top:8px'}, `${pending} report${pending===1?'':'s'} waiting for verification.`) : null);
+}
+function accessCards(c){
+  ensureExtras(c);
+  const a=c.access, p=c.periop, ind=indicationOf(c);
+  const dd = (v,u)=> v==null||v===''? fval(null) : fval(v,u);
+  const yn = b => b==null? fval(null) : el('span',{class:'st '+(b?'crit':'good')}, b?'Yes':'No');
+  return sec_('s_access', el('div',{class:'pgrid mt',style:'grid-template-columns:1fr 1fr 1fr'},
+    el('div',{class:'pcard'},
+      el('h4',{},'Indication'),
+      el('div',{style:'margin-bottom:9px'}, indicationChip(c)),
+      ind.flags.length
+        ? el('div',{class:'taglist'}, ind.flags.map(k=>el('span',{class:'tag o'}, IND[k])))
+        : el('div',{class:'hint',style:'margin:0'}, ind.cat==='comparator'? 'No motion-preserving implant, so this case is in the comparator group.'
+                                                      : 'Within the general labeled indication for the device class.'),
+      el('div',{class:'hint',style:'margin-top:10px'},'Compared with general FDA labeling for the device class. Check the specific device label.')),
+    el('div',{class:'pcard'},
+      el('h4',{},'Coverage & access'),
+      el('dl',{class:'frow'},
+        el('dt',{},'Payer'), el('dd',{}, dd(a.payer)),
+        el('dt',{},'Prior auth'), el('dd',{}, a.priorAuth? el('span',{class:'st '+(a.priorAuth==='Denied'?'crit':a.priorAuth==='Approved'?'good':'mute')},a.priorAuth) : fval(null)),
+        a.priorAuth==='Denied'? el('dt',{},'Reason') : null, a.priorAuth==='Denied'? el('dd',{}, a.denialReason||'—') : null,
+        el('dt',{},'Appeal'), el('dd',{}, a.appeal && a.appeal!=='None'? a.appeal+(a.appealResult?' · '+a.appealResult:'') : fval(a.appeal||null)),
+        el('dt',{},'Days to decision'), el('dd',{}, dd(a.daysToDecision)),
+        el('dt',{},'What happened'), el('dd',{class:'l'}, a.outcome? (a.outcome==='Converted to fusion after denial'
+          ? el('span',{class:'st crit'},a.outcome) : a.outcome) : fval(null))),
+      el('div',{class:'row',style:'margin-top:10px'}, el('button',{class:'btn sec sm',type:'button',onclick:()=>editAccess(c)},'Edit'))),
+    el('div',{class:'pcard'},
+      el('h4',{},'Setting of care'),
+      el('dl',{class:'frow'},
+        el('dt',{},'Setting'), el('dd',{}, dd(p.setting)),
+        el('dt',{},'To discharge'), el('dd',{}, dd(p.dischargeHours,'hours')),
+        el('dt',{},'Home same day'), el('dd',{}, p.sameDay==null? fval(null) : p.sameDay?'Yes':'No'),
+        el('dt',{},'ED ≤ 30 days'), el('dd',{}, yn(p.ed30)),
+        el('dt',{},'Readmit ≤ 30 d'), el('dd',{}, yn(p.readmit30)),
+        el('dt',{},'Readmit ≤ 90 d'), el('dd',{}, yn(p.readmit90))),
+      el('div',{class:'row',style:'margin-top:10px'}, el('button',{class:'btn sec sm',type:'button',onclick:()=>editPeriop(c)},'Edit')))));
+}
+function sec_(id,node){ return el('div',{id},node); }
+
+/* the outside-care questions on the add-visit form */
+function outsideCareBlock(st){
+  st.oc = st.oc || {er:'No', admitted:'No', surgery:'No', injection:'No', where:''};
+  return el('div',{class:'subcard'},
+    el('h5',{},'Care elsewhere since the last visit'),
+    el('div',{class:'hint',style:'margin:0 0 8px'},'Ask the patient. Anything marked Yes goes to the verification list on the case record.'),
+    el('div',{class:'fgrid c4'},
+      mSelect('Emergency room',st.oc,'er',['No','Yes'],{blank:false}),
+      mSelect('Hospital stay',st.oc,'admitted',['No','Yes'],{blank:false}),
+      mSelect('Spine surgery',st.oc,'surgery',['No','Yes'],{blank:false}),
+      mSelect('Spine injection',st.oc,'injection',['No','Yes'],{blank:false})),
+    mField('Where (facility, city)',st.oc,'where',{ph:'e.g. St. Mary’s, Long Beach'}));
+}
+function saveOutsideFromVisit(c, v, tpk){
+  const oc=v.oc; if(!oc) return false;
+  const any = ['er','admitted','surgery','injection'].some(k=>oc[k]==='Yes');
+  if(!any) return false;
+  ensureExtras(c);
+  c.outsideCare.push({tp:tpk||null, date:v.date, er:oc.er==='Yes', admitted:oc.admitted==='Yes',
+    surgery:oc.surgery==='Yes', injection:oc.injection==='Yes', where:oc.where||'', details:'', status:'To verify'});
+  return true;
+}
+function outsideToVerify(){
+  const out=[]; CASES.forEach(c=>(c.outsideCare||[]).forEach(o=>{ if(o.status==='To verify') out.push({c,o}); }));
+  return out.sort((a,b)=>a.o.date<b.o.date?1:-1);
+}
+
 /* ===================== DATA QUALITY ===================== */
 let qFilter='Open';
 function renderQuality(){
@@ -4750,6 +5370,15 @@ function renderQuality(){
       tile('Open > 30 days', String(aged), 'Escalation threshold', aged?'bad':'good'),
       tile('Queries per case', (qs.length/CASES.length).toFixed(2), 'Registry-wide burden'),
       tile('Resolved', String(qs.length-open.length), 'With documented response')),
+    (()=>{ const ov=outsideToVerify();
+      return el('div',{class:'mt'}, card('Care elsewhere to verify',
+        'Patients report ER visits, hospital stays, injections and surgery done somewhere else. Each report is checked against records, and confirmed spine surgery counts toward secondary surgery.',
+        tableEl([{label:'Reported',key:'d',mono:true},{label:'Case',key:'c'},{label:'What',key:'w'},{label:'Where',key:'p'},{label:'',key:'a'}],
+          ov.slice(0,12).map(({c,o})=>({d:o.date, c:el('strong',{},c.id),
+            w:[o.er&&'ER visit',o.admitted&&'Hospital stay',o.surgery&&'Spine surgery',o.injection&&'Injection'].filter(Boolean).join(', '),
+            p:o.where||'—', a:el('button',{class:'btn sm',type:'button',onclick:e=>{e.stopPropagation(); verifyOutside(c,o);}},'Verify'),
+            __click:()=>openCase(c.id)})), {empty:'Nothing waiting for verification'}),
+        ov.length>12? el('div',{class:'hint',style:'margin-top:8px'},`${ov.length-12} more`) : null)); })(),
     el('div',{class:'mt'},
       card('Query queue','Each query names the field, the reason, and routes to the record that answers it.',
         el('div',{class:'row',style:'margin-bottom:11px'},
@@ -5124,6 +5753,9 @@ function renderEpro(){
            'Pain prevents me lifting heavy weights off the floor','Pain prevents me lifting heavy weights, but I can manage light to medium weights',
            'I can lift only very light weights','I cannot lift or carry anything']},
     {k:'nrs', title:'Pain right now', q:'0 is no pain, 10 is the worst you can imagine.', nrs:true},
+    {k:'outside', title:'Care somewhere else', multi:true,
+     q:'Since your last check-in, have you had any of these anywhere other than your surgeon’s office? Tap all that apply.',
+     opts:['Emergency room visit','Overnight hospital stay','Another spine surgery','Spine injection','None of these']},
   ];
   const item=items[Math.min(eproStep,items.length-1)];
   const pct0=Math.round(100*(eproStep)/items.length);
@@ -5152,6 +5784,15 @@ function renderEpro(){
                   el('div',{class:'nrs'}, [6,7,8,9,10].map(n=>
                     el('button',{type:'button','aria-pressed':String(eproAns[item.k]===n),
                       onclick:()=>{eproAns[item.k]=n;go('epro');}},String(n)))))
+              : item.multi
+              ? el('div',{}, item.opts.map((o,i)=>{
+                  const cur = eproAns[item.k]||[], none = item.opts.length-1, on = cur.includes(i);
+                  return el('div',{class:'opt multi',role:'checkbox','aria-checked':String(on),
+                    onclick:()=>{ let n = on? cur.filter(x=>x!==i) : (i===none? [none] : [...cur.filter(x=>x!==none), i]);
+                      eproAns[item.k]=n; go('epro'); }},
+                    el('i',{}), el('span',{},o)); }),
+                  (eproAns[item.k]||[]).some(x=>x<item.opts.length-1)
+                    ? el('div',{class:'q',style:'margin-top:8px;font-size:12px'},'Thank you. The research coordinator will call to ask where, so it can be added to your record.') : null)
               : el('div',{}, item.opts.map((o,i)=>
                   el('div',{class:'opt',role:'radio','aria-checked':String(eproAns[item.k]===i),
                     onclick:()=>{eproAns[item.k]=i;go('epro');}},
@@ -5475,6 +6116,15 @@ const DICTIONARY = [
   ['ankylosed','1 if the index level fused spontaneously','0/1'],
   ['rom_latest','Mean index-level flexion-extension ROM at latest X-ray, degrees','number'],
   ['adverse_events','Number of adverse events','integer'],
+  ['indication','on (within general label), expanded, or comparator','text'],
+  ['indication_flags','Expanded-indication categories, separated by |','text'],
+  ['payer','Payer type','text'],
+  ['prior_auth','Approved / Denied / Not required / Pending','text'],
+  ['access_outcome','What happened after the insurer decision','text'],
+  ['setting','Ambulatory surgery center / Hospital outpatient / Inpatient','text'],
+  ['discharge_hours','Hours from end of surgery to discharge','number'],
+  ['readmit_90d','1 if readmitted within 90 days','0/1'],
+  ['outside_care_reports','Number of patient reports of care elsewhere','integer'],
 ];
 function datasetRows(cs){
   return cs.map((c,i)=>{
@@ -5487,7 +6137,10 @@ function datasetRows(cs){
       c.proms.pre? c.proms.pre.primary : '', l? l.v.primary : '', l? TP[l.k].label : '',
       d==null? '' : fmt(d,1), d==null? '' : (d>=MCID(c)?1:0), c.daysSince,
       c.reop?1:0, c.reop? TP[c.reop.tp].label : '', c.asd?1:0, c.hoGrade??'', c.ankylosed?1:0,
-      rv==null? '' : fmt(rv,1), (c.aes||[]).length];
+      rv==null? '' : fmt(rv,1), (c.aes||[]).length,
+      ...(()=>{ ensureExtras(c); const ind=indicationOf(c);
+        return [ind.cat, ind.flags.join('|'), c.access.payer||'', c.access.priorAuth||'', c.access.outcome||'',
+          c.periop.setting||'', c.periop.dischargeHours??'', c.periop.readmit90==null?'':(c.periop.readmit90?1:0), c.outsideCare.length]; })()];
   });
 }
 
@@ -5652,7 +6305,7 @@ window.addEventListener('beforeunload', e=>{
 });
 
 async function liveLoadCases(){
-  const rows=[];
+  const rows=[], backfill=[];
   for(let from=0;;from+=1000){
     const {data,error}=await sb.from('cases').select('id,site,data').order('id').range(from,from+999);
     if(error) throw error;
@@ -5666,8 +6319,15 @@ async function liveLoadCases(){
     if(c.date instanceof Date) c.daysSince=Math.max(0, Math.floor((Date.now()-c.date)/864e5));
     ['meds','tests','aes','queries','audit','comorbidities','procedures','visitsExtra'].forEach(k=>{ if(!Array.isArray(c[k])) c[k]=c[k]||[]; });
     if(!c.proms) c.proms={}; if(!c.radio) c.radio={};
+    if(/^DEMO-/.test(c.id) && !c.access){
+      const src = DEMO_CASES.find(d=>d.id==='MPSR-'+c.id.slice(5));
+      if(src){ ['access','periop','kyphosis','collapsedDisc','outsideCare'].forEach(k=>c[k]=JSON.parse(JSON.stringify(src[k])));
+        if(liveProfile && liveProfile.role==='ini_admin') backfill.push(c); }
+    }
+    ensureExtras(c);
     ALL_CASES.push(c);
   });
+  backfill.forEach(c=>liveQueue(c));
   applyScope();
 }
 async function liveEnter(session){
@@ -5686,7 +6346,7 @@ async function liveEnter(session){
 async function liveSignOut(){
   if(saveState.pending.size) await liveFlush();
   await sb.auth.signOut();
-  liveSession=null; liveProfile=null; ALL_CASES.length=0; applyScope(); draft=null;
+  liveSession=null; liveProfile=null; ALL_CASES.length=0; applyScope(); draft=null; benchRemote=undefined; benchWho=null;
   authMode='signin'; authMsg=null; paintSave(); paintWho(); go('auth');
 }
 
@@ -5886,6 +6546,8 @@ const SCREENS = {
   epro:  {title:'Patient portal', crumb:'What the patient receives, and the outreach ladder', icon:'survey', nav:'Patient portal', render:renderEpro},
   cohort:{title:'Cohort query', crumb:'Investigator and sponsor view', icon:'cohort', nav:'Cohort query', render:renderCohort},
   model: {title:'Data model', crumb:'Schema, standards, governance, build path', icon:'db', nav:'Data model', render:renderModel},
+  access:{title:'Indications & access', crumb:'Expanded indications, insurer decisions and setting of care', icon:'compare', nav:'Indications & access', render:renderAccess},
+  bench: {title:'Benchmarks', crumb:'Your results against the registry', icon:'dash', nav:'Benchmarks', render:renderBench},
   reports:{title:'Reports & export', crumb:'Publication tables, methods text and de-identified data', icon:'survey', nav:'Reports & export', render:renderReports},
   users: {title:'Users & access', crumb:'Approve accounts, assign sites, invite people', icon:'cohort', nav:'Users & access', render:renderUsers, iniOnly:true},
   auth:  {title:'Sign in', crumb:'', icon:'cohort', hidden:true, render:renderAuth},
@@ -5895,8 +6557,8 @@ const NAV_SECTIONS = [
   {label:'Start here', keys:['pitch']},
   {label:'Registry', keys:['dash','cases','new','risk']},
   {label:'Follow-up', keys:['radio','proms','epro']},
-  {label:'Operations', keys:['quality','sites','users']},
-  {label:'Analysis', keys:['reports','dose','cohort','planner','model']},
+  {label:'Operations', keys:['quality','sites','bench','users']},
+  {label:'Analysis', keys:['reports','access','dose','cohort','planner','model']},
 ];
 let current='pitch';
 function buildNav(){
