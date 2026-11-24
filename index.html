@@ -1443,6 +1443,14 @@ function siteShort(site){ return (site||'').split(' — ')[0]; }
 function paintWho(){
   const w=document.getElementById('whoBox'); if(!w) return;
   w.innerHTML='';
+  if(typeof LIVE!=='undefined' && LIVE){
+    const sw=document.getElementById('switchBtn'); if(sw) sw.textContent = liveSession? 'Sign out' : 'Sign in';
+    if(!liveProfile || liveProfile.role==='pending'){
+      w.append(el('b',{},'Not signed in'), document.createTextNode('Sign in to open the registry'));
+      const ch=document.getElementById('scopeChip'); if(ch) ch.innerHTML='';
+      return;
+    }
+  }
   w.append(el('b',{},currentUser.name), document.createTextNode(currentUser.role),
     el('div',{}, el('span',{class:'sc'+(isINI()?'':' site')}, isINI()? 'All sites' : siteShort(currentUser.scope))));
   const ch=document.getElementById('scopeChip');
@@ -5710,7 +5718,7 @@ async function liveSignOut(){
   if(saveState.pending.size) await liveFlush();
   await sb.auth.signOut();
   liveSession=null; liveProfile=null; ALL_CASES.length=0; applyScope(); draft=null;
-  authMode='signin'; authMsg=null; paintSave(); go('auth');
+  authMode='signin'; authMsg=null; paintSave(); paintWho(); go('auth');
 }
 
 /* ---------- sign-in, sign-up, password reset, waiting for approval ---------- */
@@ -5984,7 +5992,8 @@ if(LIVE){
     {auth:{persistSession:true, autoRefreshToken:true, detectSessionInUrl:true}});
   $('#switchBtn').textContent='Sign out';
   $('#switchBtn').replaceWith($('#switchBtn').cloneNode(true));
-  $('#switchBtn').addEventListener('click', liveSignOut);
+  $('#switchBtn').addEventListener('click', ()=>{ if(liveSession) liveSignOut(); else go('auth'); });
+  currentUser={name:'Not signed in', role:'', scope:'all'}; paintWho();
   $('#saveChip').addEventListener('click', ()=>{ if(saveState.error){ saveState.error=null; liveFlush(); } });
   document.querySelector('.proto').innerHTML='<i></i> Demo data — not for patient information';
   sb.auth.onAuthStateChange((evt, session)=>{
